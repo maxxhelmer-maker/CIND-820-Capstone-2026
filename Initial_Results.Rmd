@@ -1,0 +1,251 @@
+---
+title: "Untitled"
+output:
+  pdf_document: default
+  html_document: default
+date: "2026-03-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#install.packages("cansim")
+#install.packages("dplyr")
+#install.packages("tidyr")
+#install.packages("tidyverse")
+#install.packages("stats")
+#install.packages("readr")
+#install.packages("stringr")
+#install.packages("ggplot2")
+#install.packages("effects")
+#install.packages("lme4")
+
+library(cansim)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(stats)
+library(readr)
+library(stringr)
+library(ggplot2)
+library(effects)
+library(lme4)
+
+```
+
+```{r}
+df_age <- get_cansim("35-10-006-01")
+df_geo <- get_cansim("35-10-0156-01")
+#df_total <-get_cansim("35-10-0068-01")
+df_indID <- get_cansim("35-10-0125-01")
+#df_urb <-get_cansim("35-10-0127-01")
+
+df_pop  <- read_csv("df_pop1.csv", show_col_types = FALSE)
+
+```
+
+```{r}
+# Standardise key columns across tables
+df_geo <- df_geo %>% 
+  mutate(year = REF_DATE,
+         GEO = GEO,
+         gender = Gender,
+         ind_id = `Indigenous identity`,
+         stat = Homicides,
+         value = VALUE) %>%
+  select(year, GEO, gender, ind_id, stat, value)
+
+df_geo <- df_geo %>%
+  filter(ind_id =="Indigenous identity")
+
+
+df_pop21 <- df_pop %>%
+  filter(str_detect(`Statistics (5)`,"2021")) %>%
+  mutate(year = "2021",
+         GEO = GEO,
+         gender = `Gender (3a)`,
+         age = `Age (8G)`,
+         ind_id = `Indigenous identity (9)`,
+         stat = `Statistics (5)`,
+         VALUE = VALUE) %>%
+  select(year, GEO, gender, age, ind_id, stat, VALUE) %>%
+  filter(!is.na(VALUE))
+
+df_pop16 <- df_pop %>%
+  filter(str_detect(`Statistics (5)`,"2016")) %>%
+  mutate(year = "2016",
+         GEO = GEO,
+         gender = `Gender (3a)`,
+         age = `Age (8G)`,
+         ind_id = `Indigenous identity (9)`,
+         stat = `Statistics (5)`,
+         VALUE = VALUE) %>%
+  select(year, GEO, gender, age, ind_id, stat, VALUE) %>%
+  filter(!is.na(VALUE))
+
+df_pop <- rbind(df_pop16,df_pop21)
+df_pop$gender <- df_pop$gender %>%
+  replace(df_pop$gender=="Women+", "Female") %>%
+  replace(df_pop$gender =="Men+", "Male") %>%
+  replace(df_pop$gender == "Total - Gender", "All genders")
+
+df_pop$age <- df_pop$age %>%
+  replace(df_pop$age =="Total - Age", "Total all ages")
+
+df_pop <- df_pop %>%
+  filter(df_pop$ind_id != "Total - Indigenous identity")
+
+##Spread the values column along the statistics
+df_pop$stat <- df_pop$stat %>%
+  replace(df_pop$stat == "% distribution (2016)", "rate_ind") %>%
+  replace(df_pop$stat == "% distribution (2021)", "rate_ind") %>%
+  replace(df_pop$stat == "2016 Counts", "pop") %>%
+  replace(df_pop$stat == "2021 Counts", "pop")
+df_pop <- df_pop %>%
+  pivot_wider(names_from = stat, values_from = VALUE)
+  
+```
+
+```{r}
+#select rows from different attribute tables using str_detect 
+victims_indID <- df_indID %>%
+  filter(str_detect(Statistics, "Number of homicide victims"),
+         str_detect(`Indigenous Identity`, "First Nations|Métis|Inuk|Indigenous person"),
+         `Indigenous Identity`!= "Non-Indigenous identity",
+         `Indigenous Identity`!= "Total, by Indigenous identity") %>%
+  mutate(ind_type = case_when(
+    `Indigenous Identity`=="Indigenous person, Indigenous group unknown"~"Indigenous identity"))%>%
+  select(year = REF_DATE, GEO = GEO, gender = Gender, ind_type=`Indigenous Identity`, victims = VALUE)
+
+
+victims_geo <- df_geo %>%
+  filter(str_detect(stat, "Number of homicide victims"),
+         ind_id=="Indigenous identity") %>%
+  select(year , GEO, gender, ind_id, victims = value)
+
+victims_age <- df_age %>%
+  filter(str_detect(`Victims and accused`, "Number of homicide victims"),
+         `Indigenous identity`== "Indigenous identity",) %>%
+  select(year = REF_DATE, GEO = GEO, gender = Gender, ind_type = `Indigenous identity`, age =`Age group`, victims = VALUE)
+victims_age<- victims_age %>%
+  filter(!is.na(victims),
+  gender!="Gender unknown", 
+  age != "Age unknown")
+
+#victims_urb <- df_urb %>%
+ # filter(str_detect(Statistics, "Number of homicide victims"),
+  #       str_detect(`Indigenous identity`, "First Nations|Métis|Inuk|Indigenous person"),
+   #      `Indigenous identity`!= "Non-Indigenous identity",
+    #     `Indigenous identity`!= "Total, by Indigenous identity") %>%
+#  mutate(ind_type = case_when(
+ #   str_detect(`Indigenous identity`, "First Nations") ~ "First Nations",
+  #  str_detect(`Indigenous identity`, "Métis") ~ "Métis",
+   # str_detect(`Indigenous identity`, "Inuk|Inuit") ~ "Inuit",
+#    TRUE ~ "Indigenous (total)")) %>%
+#  select(year = REF_DATE, GEO = GEO, ind_type, location = `Location of homicide` , victims = VALUE)
+
+##URB/Rural data cannot compute rates for regression
+```
+
+```{r}
+##harmonize ages across tables
+victims_age<- victims_age %>%
+  mutate(
+    age_harmonized = case_when(
+      age == "Total all ages"                  ~ "Total all ages",
+      age == "0 to 11 years"              ~ "0 to 14 years",     # Note: includes some 12-14
+      age %in% c("12 to 17 years", "18 to 24 years") ~ "15 to 24 years",
+      age == "25 to 29 years"             ~ "25 to 34 years",
+      age == "30 to 39 years"                  ~ "25 to 34 years",    # or "35 to 44 years" — choose one consistently
+      age == "40 to 49 years"                  ~ "35 to 44 years",
+      age == "50 to 59 years"                  ~ "45 to 54 years",     # or "55 to 64 years"
+      age == "60 years and over"               ~ "55 to 64 years",     # This is imperfect (misses some 65+ weighting)
+      age == "Age unknown"                     ~ NA_character_
+    )
+  )
+
+
+```
+
+```{r}
+##bind all the victim counts rows
+total_counts <- bind_rows(victims_geo, victims_age, victims_indID) %>%
+  distinct(year, GEO, gender, age, ind_type, .keep_all = TRUE)
+
+total_counts <- total_counts %>%
+  filter(gender != "Gender unknown",
+         gender != "Unidentifiable human remains")
+
+total_counts <- total_counts %>%
+  mutate(
+    ind_type = ind_type %>%
+      replace_values( NA ~ "Indigenous identity")) %>%
+  select(year, GEO, gender, ind_type, age, age_harmonized, victims)
+ 
+  
+```
+
+```{r}
+##join requires equating indigenous identity across tables -> pop table
+df_pop2<- df_pop %>%
+  filter(ind_id != "Single Indigenous responses") %>%
+  mutate(ind_id = ind_id %>%
+            replace_values("Indigenous identity" ~ "Indigenous identity (Total)"))%>%
+  select(year, GEO, gender,age, ind_id, pop)
+
+df_pop3 <- df_pop2 %>%
+  mutate(ind_id = ind_id%>%
+    replace_values(
+    "Multiple Indigenous responses" ~ "Indigenous identity", 
+    "Indigenous responses not included elsewhere"~"Indigenous identity")) %>%
+  group_by(year, gender, age, GEO, ind_id)%>%
+  summarise(pop = sum(pop),n= n())
+
+df_pop3<- df_pop3 %>%
+  filter(n==2)%>%
+  ungroup()%>%
+  select(year, GEO, gender,age, ind_id, pop)
+
+df_pop <-rbind(df_pop2, df_pop3)%>%
+  filter(ind_id !="Multiple Indigenous responses",
+         ind_id !="Indigenous responses not included elsewhere")
+
+```
+
+
+
+
+```{r}
+df_master <- total_counts %>%
+  left_join(df_pop, by = c("year" = "year", "GEO" = "GEO", "gender" = "gender", 
+                             "age_harmonized" = "age", "ind_type" = "ind_id")) #%>%
+
+##remove NA in victim columns and also move col
+df_master <- df_master %>% drop_na(victims)
+
+# Compute rate where missing
+df_master<- df_master %>%
+  mutate(rate_ind =  (victims / pop) * 100000)
+      
+                                 
+#df_reg<- df_reg%>%filter(!is.na(rate_ind))  # keep only rows that now have a rate
+
+```
+
+```{r}
+ #set categorical variables as factor
+df_fin <- df_master %>%
+  mutate(across(c(GEO,gender,age,ind_type,year), ~as.factor(.)))%>%
+  distinct(year,GEO,gender,age, ind_type, victims)%>%
+  select(year,GEO,gender,age, ind_type, victims)%>%
+  filter(!is.na(age))
+
+```
+
+
+
+
+
+
