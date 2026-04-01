@@ -41,13 +41,12 @@ df_geo <- get_cansim("35-10-0156-01")
 #df_total <-get_cansim("35-10-0068-01")
 df_indID <- get_cansim("35-10-0125-01")
 #df_urb <-get_cansim("35-10-0127-01")
-
 df_pop  <- read_csv("df_pop1.csv", show_col_types = FALSE)
 
 ```
 
 ```{r}
-# Standardise key columns across tables
+# Standardize key columns across tables
 df_geo <- df_geo %>% 
   mutate(year = REF_DATE,
          GEO = GEO,
@@ -57,6 +56,7 @@ df_geo <- df_geo %>%
          value = VALUE) %>%
   select(year, GEO, gender, ind_id, stat, value)
 
+#filter for all rows where ind_id equals Indigenous identity
 df_geo <- df_geo %>%
   filter(ind_id =="Indigenous identity")
 
@@ -94,6 +94,7 @@ df_pop$gender <- df_pop$gender %>%
 df_pop$age <- df_pop$age %>%
   replace(df_pop$age =="Total - Age", "Total all ages")
 
+#filter out total by Indigenous identity (includes non-Indigenous identities)
 df_pop <- df_pop %>%
   filter(df_pop$ind_id != "Total - Indigenous identity")
 
@@ -110,6 +111,7 @@ df_pop <- df_pop %>%
 
 ```{r}
 #select rows from different attribute tables using str_detect 
+#creating victims tables 
 victims_indID <- df_indID %>%
   filter(str_detect(Statistics, "Number of homicide victims"),
          str_detect(`Indigenous Identity`, "First Nations|Métis|Inuk|Indigenous person"),
@@ -254,21 +256,21 @@ hist(total_counts$victims)
 #subset by prov
 df_canada<- filter(total_counts, GEO =="Canada")
 df_canada$"Log_victims" <- log(df_canada$victims)
+df_canada <- filter(df_canada, gender != "All genders")
 df_canada <- filter(df_canada, Log_victims != "-Inf")
 ```
 
 ```{r}
 
-model_canada <- glm(as.integer(Log_victims) ~ year + gender + ind_type, data = df_canada, family = "poisson")
-summary(model_canada)
+#model_canada <- glm(as.integer(Log_victims) ~ gender + ind_type, data = df_canada, family = "poisson")
+#summary(model_canada)
 
 #Non-linear model works better
 #model_canada_log <- lm(Log_victims ~ year + gender + ind_type, data = df_canada)
 #summary(model_canada_log)
 ```
 ```{r}
-pearson_residuals <- residuals(model_canada, type = "pearson")
-summary(pearson_residuals)
+##summary(pearson_residuals)
 
 #pearson_residuals_canada_log <- residuals(model_canada_log, type = "pearson")
 #summary(pearson_residuals_canada_log)
@@ -295,7 +297,68 @@ summary(pearson_residuals)
 #summary(pearson_residuals_totals_log)
 ```
 
+```{r}
+##exp(confint(model_canada))
+```
 
+```{r}
+model_canada2 <- glm(Log_victims ~ gender + ind_type, data = df_canada, family = gaussian())
+summary(model_canada2)
+```
 
+```{r}
+pearson_residuals <- residuals(model_canada2, type = "pearson")
+summary(pearson_residuals)
+```
 
+```{r}
+exp(coef(model_canada2))
+exp(confint(model_canada2))
+```
+
+```{r}
+model_canada_lm <- lm(Log_victims ~ gender + ind_type, data = df_canada)
+summary(model_canada_lm)
+```
+
+```{r}
+pearson_residuals <- residuals(model_canada_lm, type = "pearson")
+summary(pearson_residuals)
+```
+
+```{r}
+exp(coef(model_canada_lm))
+exp(confint(model_canada_lm))
+```
+
+```{r}
+summary(model_canada2)
+
+# Check residuals and fitted values
+plot(model_canada2)         
+
+# Compare AIC with Poisson and lm model 
+AIC(model_canada2)
+AIC(model_canada)
+AIC(model_canada_lm)
+```
+
+```{r}
+model_canada3 <- glm(Log_victims ~ year + gender * ind_type, data = df_canada, family = gaussian())
+summary(model_canada3)
+```
+
+```{r}
+pearson_residuals <- residuals(model_canada3, type = "pearson")
+summary(pearson_residuals)
+```
+
+```{r}
+exp(coef(model_canada3))
+exp(confint(model_canada3))
+```
+
+```{r}
+
+```
 
